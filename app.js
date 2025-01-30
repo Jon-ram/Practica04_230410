@@ -24,7 +24,16 @@ app.use(
 
 // Función para obtener la IP del cliente
 const getClientIP = (req) => {
-  return req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+  let ip = req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+
+  if (ip) {
+    // Si el IP es IPv6 con mapeo IPv4 (::ffff:192.168.1.100), extraer solo IPv4
+    if (ip.includes("::ffff:")) {
+      ip = ip.split("::ffff:")[1];
+    }
+  }
+
+  return ip;
 };
 
 // Función para obtener información de la interfaz de red
@@ -60,20 +69,21 @@ app.get("/welcome", (req, res) => {
 
 // Endpoint de login
 app.post("/login", (req, res) => {
-  const { email, nickname, fullName } = req.body;
-  if (!email || !nickname || !fullName) {
-    return res.status(400).json({ message: "Se esperan campos requeridos" });
+  const { email, nickname, clientMAC } = req.body;
+
+  if (!email || !nickname || !clientMAC) {
+    return res.status(400).json({ message: "Se esperan campos requeridos (email, nickname, clientMAC)" });
   }
 
   const sessionId = uuidv4();
   const now = moment().tz("America/Mexico_City");
+
   sessions[sessionId] = {
     sessionId,
     email,
     nickname,
-    fullName,
     clientIP: getClientIP(req),
-    clientMAC: null, // Asumimos que no es posible obtenerlo directamente desde el cliente
+    clientMAC, // Ahora se recibe desde el cliente
     serverIP: serverInfo.ip,
     serverMAC: serverInfo.mac,
     createdAt: now,
@@ -99,8 +109,8 @@ app.get("/status", (req, res) => {
 
   res.status(200).json({
     sessionId: session.sessionId,
-    fullName: session.fullName,
     email: session.email,
+    nickname: session.nickname,
     clientIP: session.clientIP,
     clientMAC: session.clientMAC,
     serverIP: session.serverIP,
@@ -126,8 +136,12 @@ app.post("/update", (req, res) => {
 app.get("/Sessions", (req, res) => {
   const activeSessions = Object.values(sessions).map((session) => ({
     sessionId: session.sessionId,
-    fullName: session.fullName,
     email: session.email,
+    nickname: session.nickname,
+    clientIP: session.clientIP,
+    clientMAC: session.clientMAC,
+    serverIP: session.serverIP,
+    serverMAC: session.serverMAC,
     createdAt: session.createdAt.format(),
     lastAccessed: session.lastAccessed.format(),
     inactivityDuration: `${calculateInactivity(session.lastAccessed)} segundos`,
@@ -158,7 +172,7 @@ setInterval(() => {
   for (const sessionId in sessions) {
     const session = sessions[sessionId];
     const inactivity = calculateInactivity(session.lastAccessed);
-    if (inactivity > 120) { // 2 minutos
+    if (inactivity > 120) {
       delete sessions[sessionId];
     }
   }

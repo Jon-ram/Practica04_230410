@@ -41,7 +41,7 @@ export const welcome = (req, res) => {
   res.status(200).json({
     message:
       "Bienvenid@ al API de control de sesiones con persistencia en MongoDB Atlas",
-    autor: "Tu Nombre",
+    autor: "Jonathan Baldemar Ramirez Reyes",
   });
 };
 
@@ -84,18 +84,33 @@ export const login = async (req, res) => {
 };
 
 // Endpoint para consultar el estado de la sesión
+// Solo requiere el sessionId en query: ?sessionId=...
+// Si la sesión está "Activa" pero han pasado 2 o más minutos de inactividad,
+// se actualiza su estado a "Cerrada por el Sistema".
 export const status = async (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) {
     return res.status(400).json({ message: "Se requiere sessionId" });
   }
   try {
-    // READ: se usa el método .findOne() de Mongoose
-    const session = await dao.getSessionById(sessionId);
+    let session = await dao.getSessionById(sessionId);
     if (!session) {
       return res.status(404).json({ message: "Sesión no encontrada" });
     }
+    
     const inactivity = calculateInactivity(session.lastAccessed);
+
+    // Si la sesión está activa y han pasado 2 minutos o más de inactividad,
+    // se cambia el estado a "Cerrada por el Sistema".
+    if (session.status === "Activa" && inactivity >= 120) {
+      session.lastAccessed = moment().tz("America/Mexico_City").toDate();
+      await dao.updateSession(sessionId, {
+        status: "Cerrada por el Sistema",
+        lastAccessed: session.lastAccessed,
+      });
+      session.status = "Cerrada por el Sistema";
+    }
+
     res.status(200).json({
       sessionId: session.sessionId,
       email: session.email,
@@ -111,33 +126,29 @@ export const status = async (req, res) => {
     });
   } catch (error) {
     console.error("Error en status:", error);
-    res
-      .status(500)
-      .json({ message: "Error al obtener el estado de la sesión" });
+    res.status(500).json({ message: "Error al obtener el estado de la sesión" });
   }
 };
 
 // Endpoint para actualizar la sesión (UPDATE)
+// Siempre actualiza el campo lastAccessed y establece el estado a "Activa"
 export const update = async (req, res) => {
-  const { sessionId, status } = req.body;
+  const { sessionId } = req.body;
   if (!sessionId) {
     return res.status(400).json({ message: "Se requiere sessionId" });
   }
   try {
     const updateData = {
       lastAccessed: moment().tz("America/Mexico_City").toDate(),
+      status: "Activa"
     };
-    if (status) {
-      updateData.status = status;
-    }
+
     // UPDATE: se usa el método .findOneAndUpdate() de Mongoose
     const updatedSession = await dao.updateSession(sessionId, updateData);
     if (!updatedSession) {
       return res.status(404).json({ message: "Sesión no encontrada" });
     }
-    res
-      .status(200)
-      .json({ message: "Sesión actualizada", session: updatedSession });
+    res.status(200).json({ message: "Sesión actualizada", session: updatedSession });
   } catch (error) {
     console.error("Error en update:", error);
     res.status(500).json({ message: "Error al actualizar la sesión" });
@@ -145,23 +156,21 @@ export const update = async (req, res) => {
 };
 
 // Endpoint para cerrar la sesión (logout)
+// Actualiza el estado a "Cerrada por el Usuario"
 export const logout = async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) {
     return res.status(400).json({ message: "Se requiere sessionId" });
   }
   try {
-    // UPDATE: se cambia el status a "Finalizada por el Usuario" usando .findOneAndUpdate()
     const updatedSession = await dao.updateSession(sessionId, {
-      status: "Finalizada por el Usuario",
+      status: "Cerrada por el Usuario",
       lastAccessed: moment().tz("America/Mexico_City").toDate(),
     });
     if (!updatedSession) {
       return res.status(404).json({ message: "Sesión no encontrada" });
     }
-    res
-      .status(200)
-      .json({ message: "Sesión cerrada", session: updatedSession });
+    res.status(200).json({ message: "Sesión cerrada", session: updatedSession });
   } catch (error) {
     console.error("Error en logout:", error);
     res.status(500).json({ message: "Error al cerrar la sesión" });
@@ -171,7 +180,6 @@ export const logout = async (req, res) => {
 // Endpoint para obtener todas las sesiones (allSessions)
 export const allSessions = async (req, res) => {
   try {
-    // READ: se usa el método .find() de Mongoose
     const sessions = await dao.getAllSessions();
     res.status(200).json(sessions);
   } catch (error) {
@@ -183,29 +191,21 @@ export const allSessions = async (req, res) => {
 // Endpoint para obtener todas las sesiones activas (allCurrentSessions)
 export const allCurrentSessions = async (req, res) => {
   try {
-    // READ: se usa el método .find() de Mongoose con un filtro por status "Activa"
     const sessions = await dao.getAllCurrentSessions();
     res.status(200).json(sessions);
   } catch (error) {
     console.error("Error en allCurrentSessions:", error);
-    res
-      .status(500)
-      .json({ message: "Error al obtener las sesiones activas" });
+    res.status(500).json({ message: "Error al obtener las sesiones activas" });
   }
 };
 
 // Endpoint para eliminar TODAS las sesiones (deleteAllSessions) - ¡PELIGROSO!
 export const deleteAllSessions = async (req, res) => {
   try {
-    // DELETE: se usa el método .deleteMany() de Mongoose
     await dao.deleteAllSessions();
-    res
-      .status(200)
-      .json({ message: "Todas las sesiones han sido eliminadas" });
+    res.status(200).json({ message: "Todas las sesiones han sido eliminadas" });
   } catch (error) {
     console.error("Error en deleteAllSessions:", error);
-    res
-      .status(500)
-      .json({ message: "Error al eliminar todas las sesiones" });
+    res.status(500).json({ message: "Error al eliminar todas las sesiones" });
   }
 };

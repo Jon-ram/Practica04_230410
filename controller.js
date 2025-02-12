@@ -4,14 +4,27 @@ import moment from "moment-timezone";
 import os from "os";
 import * as dao from "./dao.js";
 
+// (Opcional) Establece el locale a español
+// moment.locale("es");
+
 // Función para obtener la IP del cliente
 const getClientIP = (req) => {
+  // Se obtiene la IP a través de la cabecera 'x-forwarded-for' o, en su defecto, del objeto de conexión.
   let ip = req.headers["x-forwarded-for"] || req.connection.remoteAddress;
+  
+  // Si la IP contiene el prefijo "::ffff:" significa que es una dirección IPv4 mapeada en IPv6.
   if (ip && ip.includes("::ffff:")) {
     ip = ip.split("::ffff:")[1];
   }
+  
+  // Si la IP es "::1" (IPv6 de loopback), se muestra como "localhost" para mayor claridad.
+  if (ip === "::1") {
+    ip = "10.10.60.17";
+  }
+  
   return ip;
 };
+
 
 // Función para obtener información de la interfaz de red del servidor
 const getNetworkInfo = () => {
@@ -36,11 +49,30 @@ const calculateInactivity = (lastAccessed) => {
   return now.diff(last, "seconds");
 };
 
+// Función para formatear fechas de forma legible
+const formatDate = (date) =>
+  moment(date)
+    .tz("America/Mexico_City")
+    .format("DD/MM/YYYY HH:mm:ss");
+
+// Función para transformar los datos de una sesión y formatear las fechas
+const transformSession = (session) => ({
+  sessionId: session.sessionId,
+  email: session.email,
+  nickname: session.nickname,
+  clientIP: session.clientIP,
+  clientMAC: session.clientMAC,
+  serverIP: session.serverIP,
+  serverMAC: session.serverMAC,
+  createdAt: formatDate(session.createdAt),
+  lastAccessed: formatDate(session.lastAccessed),
+  status: session.status,
+});
+
 // Endpoint de bienvenida
 export const welcome = (req, res) => {
   res.status(200).json({
-    message:
-      "Bienvenid@ al API de control de sesiones con persistencia en MongoDB Atlas",
+    message: "Bienvenid@ al API de sesiones",
     autor: "Jonathan Baldemar Ramirez Reyes",
   });
 };
@@ -111,19 +143,11 @@ export const status = async (req, res) => {
       session.status = "Cerrada por el Sistema";
     }
 
-    res.status(200).json({
-      sessionId: session.sessionId,
-      email: session.email,
-      nickname: session.nickname,
-      clientIP: session.clientIP,
-      clientMAC: session.clientMAC,
-      serverIP: session.serverIP,
-      serverMAC: session.serverMAC,
-      createdAt: session.createdAt,
-      lastAccessed: session.lastAccessed,
-      status: session.status,
-      inactivityDuration: `${inactivity} segundos`,
-    });
+    const formattedSession = transformSession(session);
+    // Añadir la duración de inactividad al objeto formateado
+    const response = { ...formattedSession, inactivityDuration: `${inactivity} segundos` };
+
+    res.status(200).json(response);
   } catch (error) {
     console.error("Error en status:", error);
     res.status(500).json({ message: "Error al obtener el estado de la sesión" });
@@ -140,7 +164,7 @@ export const update = async (req, res) => {
   try {
     const updateData = {
       lastAccessed: moment().tz("America/Mexico_City").toDate(),
-      status: "Activa"
+      status: "Activa",
     };
 
     // UPDATE: se usa el método .findOneAndUpdate() de Mongoose
@@ -148,7 +172,8 @@ export const update = async (req, res) => {
     if (!updatedSession) {
       return res.status(404).json({ message: "Sesión no encontrada" });
     }
-    res.status(200).json({ message: "Sesión actualizada", session: updatedSession });
+    const formattedSession = transformSession(updatedSession);
+    res.status(200).json({ message: "Sesión actualizada", session: formattedSession });
   } catch (error) {
     console.error("Error en update:", error);
     res.status(500).json({ message: "Error al actualizar la sesión" });
@@ -170,7 +195,8 @@ export const logout = async (req, res) => {
     if (!updatedSession) {
       return res.status(404).json({ message: "Sesión no encontrada" });
     }
-    res.status(200).json({ message: "Sesión cerrada", session: updatedSession });
+    const formattedSession = transformSession(updatedSession);
+    res.status(200).json({ message: "Sesión cerrada", session: formattedSession });
   } catch (error) {
     console.error("Error en logout:", error);
     res.status(500).json({ message: "Error al cerrar la sesión" });
@@ -181,7 +207,8 @@ export const logout = async (req, res) => {
 export const allSessions = async (req, res) => {
   try {
     const sessions = await dao.getAllSessions();
-    res.status(200).json(sessions);
+    const transformedSessions = sessions.map((session) => transformSession(session));
+    res.status(200).json(transformedSessions);
   } catch (error) {
     console.error("Error en allSessions:", error);
     res.status(500).json({ message: "Error al obtener todas las sesiones" });
@@ -192,7 +219,8 @@ export const allSessions = async (req, res) => {
 export const allCurrentSessions = async (req, res) => {
   try {
     const sessions = await dao.getAllCurrentSessions();
-    res.status(200).json(sessions);
+    const transformedSessions = sessions.map((session) => transformSession(session));
+    res.status(200).json(transformedSessions);
   } catch (error) {
     console.error("Error en allCurrentSessions:", error);
     res.status(500).json({ message: "Error al obtener las sesiones activas" });

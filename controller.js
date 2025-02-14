@@ -1,30 +1,38 @@
-// controller.js
 import { v4 as uuidv4 } from "uuid";
 import moment from "moment-timezone";
 import os from "os";
+import crypto from "crypto";
 import * as dao from "./dao.js";
 
-// (Opcional) Establece el locale a español
-// moment.locale("es");
+// Clave pública (ejemplo). En producción, obtén esta clave de forma segura.
+const publicKey = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsI71B1BSkSdZf9dXnKzX
+s6vn0XqYriB0PZsD4lSfjZ3fjQaP3NqXThZ+vStU/xFAJxQ+QfsKM6cJ/R5wmfDN
+oKjQvEeT8BpWj/y1HscEzco1MR74rTEEk1Rwv5yviMq5Q5pX3jDS3t+IemsoDqHR
+bjkYYb6zy8yc6IFuVfDhsXCIK/+C5LJ4eJfN9ERnj6c5nOH2T47Anb7oC/JnH2+D
+YcxJz4+6I/T2dYIKqfUVoQOa20A92PEnXJccV2z37JdB/0rEZT3+8G2z/nFs3qIW
+Y6XjI4n3Sx1k0cKIR2DRkryXAl9xjVYJ98/fD6A4Ftrjcmw0xL8Zh7Kzq56xk0yV
+NwIDAQAB
+-----END PUBLIC KEY-----`;
+
+// Función para encriptar un texto utilizando RSA y la clave pública
+const encryptRSA = (text) => {
+  const buffer = Buffer.from(text, "utf8");
+  const encrypted = crypto.publicEncrypt(publicKey, buffer);
+  return encrypted.toString("base64");
+};
 
 // Función para obtener la IP del cliente
 const getClientIP = (req) => {
-  // Se obtiene la IP a través de la cabecera 'x-forwarded-for' o, en su defecto, del objeto de conexión.
   let ip = req.headers["x-forwarded-for"] || req.connection.remoteAddress;
-  
-  // Si la IP contiene el prefijo "::ffff:" significa que es una dirección IPv4 mapeada en IPv6.
   if (ip && ip.includes("::ffff:")) {
     ip = ip.split("::ffff:")[1];
   }
-  
-  // Si la IP es "::1" (IPv6 de loopback), se muestra como "localhost" para mayor claridad.
   if (ip === "::1") {
     ip = "10.10.60.17";
   }
-  
   return ip;
 };
-
 
 // Función para obtener información de la interfaz de red del servidor
 const getNetworkInfo = () => {
@@ -55,13 +63,14 @@ const formatDate = (date) =>
     .tz("America/Mexico_City")
     .format("DD/MM/YYYY HH:mm:ss");
 
-// Función para transformar los datos de una sesión y formatear las fechas
+// Función para transformar los datos de una sesión y formatear las fechas,
+// manteniendo los campos sensibles en su forma encriptada (RSA).
 const transformSession = (session) => ({
   sessionId: session.sessionId,
-  email: session.email,
+  email: session.email,         // Se muestra encriptado (RSA)
   nickname: session.nickname,
-  clientIP: session.clientIP,
-  clientMAC: session.clientMAC,
+  clientIP: session.clientIP,   // Se muestra encriptado (RSA)
+  clientMAC: session.clientMAC, // Se muestra encriptado (RSA)
   serverIP: session.serverIP,
   serverMAC: session.serverMAC,
   createdAt: formatDate(session.createdAt),
@@ -89,12 +98,17 @@ export const login = async (req, res) => {
   const sessionId = uuidv4();
   const now = moment().tz("America/Mexico_City").toDate();
 
+  // Encriptamos los datos sensibles utilizando RSA
+  const encryptedEmail = encryptRSA(email);
+  const encryptedClientIP = encryptRSA(getClientIP(req));
+  const encryptedClientMAC = encryptRSA(clientMAC);
+
   const sessionData = {
     sessionId,
-    email,
+    email: encryptedEmail,
     nickname,
-    clientIP: getClientIP(req),
-    clientMAC,
+    clientIP: encryptedClientIP,
+    clientMAC: encryptedClientMAC,
     serverIP: serverInfo.ip,
     serverMAC: serverInfo.mac,
     createdAt: now,
@@ -103,7 +117,6 @@ export const login = async (req, res) => {
   };
 
   try {
-    // CREATE: se usa el método .save() de Mongoose
     const newSession = await dao.createSession(sessionData);
     res.status(200).json({
       message: "Inicio de sesión exitoso",
@@ -116,9 +129,6 @@ export const login = async (req, res) => {
 };
 
 // Endpoint para consultar el estado de la sesión
-// Solo requiere el sessionId en query: ?sessionId=...
-// Si la sesión está "Activa" pero han pasado 2 o más minutos de inactividad,
-// se actualiza su estado a "Cerrada por el Sistema".
 export const status = async (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) {
@@ -132,9 +142,7 @@ export const status = async (req, res) => {
     
     const inactivity = calculateInactivity(session.lastAccessed);
 
-    // Si la sesión está activa y han pasado 2 minutos o más de inactividad,
-    // se cambia el estado a "Cerrada por el Sistema".
-    if (session.status === "Activa" && inactivity >= 120) {
+    if (session.status === "Activa" && inactivity >= 300) {
       session.lastAccessed = moment().tz("America/Mexico_City").toDate();
       await dao.updateSession(sessionId, {
         status: "Cerrada por el Sistema",
@@ -144,7 +152,6 @@ export const status = async (req, res) => {
     }
 
     const formattedSession = transformSession(session);
-    // Añadir la duración de inactividad al objeto formateado
     const response = { ...formattedSession, inactivityDuration: `${inactivity} segundos` };
 
     res.status(200).json(response);
@@ -155,7 +162,6 @@ export const status = async (req, res) => {
 };
 
 // Endpoint para actualizar la sesión (UPDATE)
-// Siempre actualiza el campo lastAccessed y establece el estado a "Activa"
 export const update = async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) {
@@ -167,7 +173,6 @@ export const update = async (req, res) => {
       status: "Activa",
     };
 
-    // UPDATE: se usa el método .findOneAndUpdate() de Mongoose
     const updatedSession = await dao.updateSession(sessionId, updateData);
     if (!updatedSession) {
       return res.status(404).json({ message: "Sesión no encontrada" });
@@ -181,7 +186,6 @@ export const update = async (req, res) => {
 };
 
 // Endpoint para cerrar la sesión (logout)
-// Actualiza el estado a "Cerrada por el Usuario"
 export const logout = async (req, res) => {
   const { sessionId } = req.body;
   if (!sessionId) {

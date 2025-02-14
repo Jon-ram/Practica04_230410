@@ -19,7 +19,7 @@ app.use(
     secret: "p4-JBRR-SessionesHTTP-VariablesDeSesion",
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 2 * 60 * 1000 }, // 2 minutos
+    cookie: { maxAge: 5 * 60 * 1000 }, // 5 minutos
   })
 );
 
